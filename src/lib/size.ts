@@ -6,7 +6,7 @@ const MAX_ASPECT_RATIO = 3
 const MIN_PIXELS = 655_360
 const MAX_PIXELS = 8_294_400
 
-export type SizeTier = '1K' | '2K' | '4K'
+export type SizeTier = '1K'
 
 function roundToMultiple(value: number, multiple: number) {
   return Math.max(multiple, Math.round(value / multiple) * multiple)
@@ -149,57 +149,52 @@ export function formatImageRatio(width: number, height: number) {
   return friendlyNearest && friendlyNearest.delta <= 0.04 ? `≈${friendlyNearest.label}` : simplified
 }
 
+const SHORT_EDGE = 1024
+
 /**
- * 每个档位的像素预算上限。
- * 在该预算内、满足所有 OpenAI 约束的前提下，选取总像素最大的候选尺寸。
+ * 短边固定 1024px，长边按比例缩放并对齐 16 的倍数。
+ * 例如 1:1 → 1024x1024，3:2 → 1536x1024，2:3 → 1024x1536
  */
-const TIER_PIXEL_BUDGET: Record<SizeTier, number> = {
-  '1K': 1_572_864,   // 1024 × 1536
-  '2K': 4_194_304,   // 2048 × 2048
-  '4K': MAX_PIXELS,  // 8_294_400
-}
-
-const MAX_RATIO_ERROR = 0.01
-
-export function calculateImageSize(tier: SizeTier, ratio: string) {
+export function calculateImageSize(_tier: SizeTier, ratio: string) {
   const parsed = parseRatio(ratio)
   if (!parsed) return null
 
-  const { width: ratioWidth, height: ratioHeight } = parsed
-  const targetRatio = ratioWidth / ratioHeight
-  const pixelBudget = TIER_PIXEL_BUDGET[tier]
+  const { width: ratioW, height: ratioH } = parsed
+  const aspect = ratioW / ratioH
 
-  let bestWidth = 0
-  let bestHeight = 0
-  let bestPixels = 0
-
-  for (let w = SIZE_MULTIPLE; w <= MAX_EDGE; w += SIZE_MULTIPLE) {
-    const idealH = w / targetRatio
-    // 尝试 floor 和 ceil 对齐到 16 的倍数，取像素更大且合法的那个
-    const candidates = [
-      Math.floor(idealH / SIZE_MULTIPLE) * SIZE_MULTIPLE,
-      Math.ceil(idealH / SIZE_MULTIPLE) * SIZE_MULTIPLE,
-    ]
-
-    for (const h of candidates) {
-      if (h < SIZE_MULTIPLE || h > MAX_EDGE) continue
-
-      const pixels = w * h
-      if (pixels > pixelBudget || pixels < MIN_PIXELS) continue
-      if (Math.max(w / h, h / w) > MAX_ASPECT_RATIO) continue
-
-      const actualRatio = w / h
-      const ratioError = Math.abs(actualRatio - targetRatio) / targetRatio
-      if (ratioError > MAX_RATIO_ERROR) continue
-
-      if (pixels > bestPixels) {
-        bestPixels = pixels
-        bestWidth = w
-        bestHeight = h
-      }
-    }
+  let w: number
+  let h: number
+  if (aspect >= 1) {
+    h = SHORT_EDGE
+    w = roundToMultiple(SHORT_EDGE * aspect, SIZE_MULTIPLE)
+  } else {
+    w = SHORT_EDGE
+    h = roundToMultiple(SHORT_EDGE / aspect, SIZE_MULTIPLE)
   }
 
-  if (bestPixels === 0) return null
-  return `${bestWidth}x${bestHeight}`
+  if (w > MAX_EDGE) w = floorToMultiple(MAX_EDGE, SIZE_MULTIPLE)
+  if (h > MAX_EDGE) h = floorToMultiple(MAX_EDGE, SIZE_MULTIPLE)
+
+  return `${w}x${h}`
+}
+
+/**
+ * 计算 API 返回图片的标准化目标尺寸。
+ * 短边固定 1024px，长边按原始比例缩放并对齐 16 的倍数。
+ * 如果图片已经符合标准则返回 null（无需缩放）。
+ */
+export function calcNormalizedSize(origW: number, origH: number) {
+  const shortEdge = Math.min(origW, origH)
+  if (shortEdge <= 0) return null
+
+  const scale = SHORT_EDGE / shortEdge
+  const targetW = origW <= origH
+    ? SHORT_EDGE
+    : roundToMultiple(origW * scale, SIZE_MULTIPLE)
+  const targetH = origH <= origW
+    ? SHORT_EDGE
+    : roundToMultiple(origH * scale, SIZE_MULTIPLE)
+
+  if (targetW === origW && targetH === origH) return null
+  return { width: targetW, height: targetH }
 }

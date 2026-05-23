@@ -3,8 +3,7 @@ import { calculateImageSize, normalizeImageSize, parseRatio, type SizeTier } fro
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import ViewportTooltip from './ViewportTooltip'
 
-const TIERS: SizeTier[] = ['1K', '2K', '4K']
-const SIZE_LIMIT_TEXT = '由于模型限制，最终输出会自动规整到合法尺寸：\n宽高均为 16 的倍数，最大边长 3840px，宽高比不超过 3:1，总像素限制为 655360-8294400。'
+const SIZE_LIMIT_TEXT = '短边固定 1024px，长边按比例缩放并对齐 16 的倍数。'
 const RATIOS = [
   { label: '1:1', value: '1:1' },
   { label: '3:2', value: '3:2' },
@@ -23,21 +22,13 @@ interface Props {
   allowAuto?: boolean
 }
 
-type Mode = 'auto' | 'ratio' | 'resolution'
-
-function parseSize(size: string) {
-  const match = size.match(/^\s*(\d+)\s*[xX×]\s*(\d+)\s*$/)
-  if (!match) return null
-  return { width: match[1], height: match[2] }
-}
+type Mode = 'auto' | 'ratio'
 
 function findPresetForSize(size: string) {
   const normalized = normalizeImageSize(size)
-  for (const tier of TIERS) {
-    for (const ratio of RATIOS) {
-      if (calculateImageSize(tier, ratio.value) === normalized) {
-        return { tier, ratio: ratio.value }
-      }
+  for (const ratio of RATIOS) {
+    if (calculateImageSize('1K', ratio.value) === normalized) {
+      return { ratio: ratio.value }
     }
   }
   return null
@@ -47,21 +38,13 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
   usePreventBackgroundScroll(true)
 
   const currentPreset = findPresetForSize(currentSize)
-  const currentParsedSize = parseSize(currentSize)
   const [mode, setMode] = useState<Mode>(() => {
     if (!currentSize || currentSize === 'auto') return allowAuto ? 'auto' : 'ratio'
-    if (currentPreset) return 'ratio'
-    return 'resolution'
+    return 'ratio'
   })
 
-  // Ratio mode state
-  const [tier, setTier] = useState<SizeTier>(currentPreset?.tier ?? '1K')
   const [ratio, setRatio] = useState(currentPreset?.ratio ?? (allowAuto ? '1:1' : '4:3'))
   const [customRatio, setCustomRatio] = useState('16:9')
-
-  // Resolution mode state
-  const [customW, setCustomW] = useState(currentParsedSize?.width ?? '1024')
-  const [customH, setCustomH] = useState(currentParsedSize?.height ?? '1024')
 
   const [hintVisible, setHintVisible] = useState(false)
   const hintTimerRef = useRef<number | null>(null)
@@ -81,36 +64,15 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
 
   const previewSize = useMemo(() => {
     if (mode === 'auto') return 'auto'
-    
-    if (mode === 'ratio') {
-      const size = calculateImageSize(tier, activeRatio)
-      return size ? normalizeImageSize(size) : ''
-    }
-    
-    if (mode === 'resolution') {
-      const w = parseInt(customW, 10)
-      const h = parseInt(customH, 10)
-      if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
-        return normalizeImageSize(`${w}x${h}`)
-      }
-      return ''
-    }
-    
-    return ''
-  }, [mode, tier, activeRatio, customW, customH])
+    const size = calculateImageSize('1K', activeRatio)
+    return size ? normalizeImageSize(size) : ''
+  }, [mode, activeRatio])
 
   const isClamped = useMemo(() => {
     if (!previewSize || previewSize === 'auto') return false
-    if (mode === 'ratio' && ratio === 'custom') return customRatioClamped
-    if (mode === 'resolution') {
-      const w = parseInt(customW, 10)
-      const h = parseInt(customH, 10)
-      if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
-        return `${w}x${h}` !== previewSize
-      }
-    }
+    if (ratio === 'custom') return customRatioClamped
     return false
-  }, [mode, ratio, customRatioClamped, customW, customH, previewSize])
+  }, [ratio, customRatioClamped, previewSize])
 
   const showHint = () => setHintVisible(true)
   const hideHint = () => {
@@ -182,12 +144,6 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
             >
               按比例
             </button>
-            <button
-              onClick={() => setMode('resolution')}
-              className={`flex-1 rounded-lg py-1.5 text-sm font-medium transition ${mode === 'resolution' ? 'bg-white text-gray-800 shadow-sm dark:bg-gray-700 dark:text-gray-100' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'}`}
-            >
-              自定义宽高
-            </button>
           </div>
 
           <div className="h-[380px] max-h-[55vh] overflow-y-auto scrollbar-thin scrollbar-thumb-gray-200 dark:scrollbar-thumb-white/10 pr-1 -mr-1 pb-2">
@@ -207,17 +163,6 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
 
             {mode === 'ratio' && (
               <div className="space-y-5 animate-fade-in">
-                <section>
-                  <div className="mb-2 text-xs font-medium text-gray-400 dark:text-gray-500">基准分辨率</div>
-                  <div className="grid grid-cols-3 gap-2">
-                    {TIERS.map((item) => (
-                      <button key={item} className={buttonClass(tier === item)} onClick={() => setTier(item)}>
-                        {item}
-                      </button>
-                    ))}
-                  </div>
-                </section>
-
                 <section>
                   <div className="mb-2 text-xs font-medium text-gray-400 dark:text-gray-500">图像比例</div>
                   <div className="grid grid-cols-4 gap-2">
@@ -268,48 +213,6 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
               </div>
             )}
 
-            {mode === 'resolution' && (
-              <div className="space-y-5 animate-fade-in">
-                <section>
-                  <div className="mb-4 text-xs font-medium text-gray-400 dark:text-gray-500">输入具体像素值</div>
-                  <div className="flex items-center gap-4">
-                    <label className="flex-1">
-                      <span className="mb-1.5 block text-xs text-gray-500 dark:text-gray-400">宽度 (Width)</span>
-                      <input
-                        type="number"
-                        value={customW}
-                        onChange={(e) => setCustomW(e.target.value)}
-                        className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
-                        placeholder="例如 1024"
-                      />
-                    </label>
-                    <div className="mt-5 text-gray-300 dark:text-gray-600">
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </div>
-                    <label className="flex-1">
-                      <span className="mb-1.5 block text-xs text-gray-500 dark:text-gray-400">高度 (Height)</span>
-                      <input
-                        type="number"
-                        value={customH}
-                        onChange={(e) => setCustomH(e.target.value)}
-                        className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
-                        placeholder="例如 1024"
-                      />
-                    </label>
-                  </div>
-                </section>
-                <div className="rounded-xl border border-gray-200/80 bg-gray-50/80 p-3 text-xs text-gray-600 dark:border-white/[0.05] dark:bg-white/[0.02] dark:text-gray-400">
-                  <div className="flex items-start gap-2">
-                    <svg className="mt-[2px] h-4 w-4 flex-shrink-0 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    <div className="whitespace-pre-line leading-relaxed">{SIZE_LIMIT_TEXT}</div>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
 
           <div className="rounded-2xl bg-gray-50 px-4 py-3 dark:bg-white/[0.03]">

@@ -1,4 +1,5 @@
 import { assertUsableMaskCoverage, classifyMaskAlpha, type MaskCoverage } from './mask'
+import { calcNormalizedSize } from './size'
 
 export interface ImageDimensions {
   width: number
@@ -108,5 +109,23 @@ export async function createMaskPreviewDataUrl(imageDataUrl: string, maskDataUrl
   if (!overlayCtx) throw new Error('当前浏览器不支持 Canvas')
   overlayCtx.putImageData(overlay, 0, 0)
   ctx.drawImage(overlayCanvas, 0, 0)
+  return canvas.toDataURL('image/png')
+}
+
+/**
+ * 标准化 API 生成图片的尺寸：短边固定 1024px，长边等比缩放并对齐 16 的倍数。
+ * 如果图片已符合标准，直接返回原始 dataUrl。
+ */
+export async function normalizeGeneratedImage(dataUrl: string): Promise<string> {
+  const image = await loadImage(dataUrl)
+  const target = calcNormalizedSize(image.naturalWidth, image.naturalHeight)
+  if (!target) return dataUrl
+
+  const canvas = document.createElement('canvas')
+  canvas.width = target.width
+  canvas.height = target.height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return dataUrl
+  ctx.drawImage(image, 0, 0, target.width, target.height)
   return canvas.toDataURL('image/png')
 }

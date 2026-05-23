@@ -46,7 +46,7 @@ import { collectAgentRoundOutputImageSlots, extractAgentReferenceIds, getAgentCu
 import { IMAGE_FETCH_CORS_HINT } from './lib/imageApiShared'
 import { getFalErrorMessage, getFalQueuedImageResult } from './lib/falAiImageApi'
 import { getCustomQueuedImageResult } from './lib/openaiCompatibleImageApi'
-import { validateMaskMatchesImage } from './lib/canvasImage'
+import { normalizeGeneratedImage, validateMaskMatchesImage } from './lib/canvasImage'
 import { orderInputImagesForMask } from './lib/mask'
 import { getChangedParams, normalizeParamsForSettings } from './lib/paramCompatibility'
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
@@ -137,6 +137,11 @@ export function getCachedImage(id: string): string | undefined {
     imageCache.set(id, dataUrl)
   }
   return dataUrl
+}
+
+async function storeNormalizedImage(dataUrl: string) {
+  const normalized = await normalizeGeneratedImage(dataUrl)
+  return storeImage(normalized, 'generated')
 }
 
 function cacheImage(id: string, dataUrl: string) {
@@ -1829,7 +1834,7 @@ async function completeRecoveredFalTask(task: TaskRecord, result: Awaited<Return
   const actualParamsList = await resolveImageSizeParamsList(result.images, result.actualParamsList)
   const outputIds: string[] = []
   for (const dataUrl of result.images) {
-    const imgId = await storeImage(dataUrl, 'generated')
+    const imgId = await storeNormalizedImage(dataUrl)
     cacheImage(imgId, dataUrl)
     outputIds.push(imgId)
   }
@@ -2539,7 +2544,7 @@ async function deleteUnreferencedImageIds(imageIds: Iterable<string>) {
 
 async function persistTaskStreamPartialImage(taskId: string, dataUrl: string) {
   try {
-    const imgId = await storeImage(dataUrl, 'generated')
+    const imgId = await storeNormalizedImage(dataUrl)
     cacheImage(imgId, dataUrl)
 
     const latestTask = useStore.getState().tasks.find((task) => task.id === taskId)
@@ -3264,7 +3269,7 @@ async function executeAgentRound(
       const latestTask = useStore.getState().tasks.find((task) => task.id === taskId)
       if (latestTask?.status === 'done' && latestTask.outputImages.length > 0) return taskId
 
-      const imgId = await storeImage(image.dataUrl, 'generated')
+      const imgId = await storeNormalizedImage(image.dataUrl)
       cacheImage(imgId, image.dataUrl)
       const actualParams: Partial<TaskParams> = {
         ...(Object.keys(image.actualParams ?? {}).length ? image.actualParams : {}),
@@ -3545,7 +3550,7 @@ async function executeAgentRound(
         }
         const promptRefIds = uniqueIds(extractAgentReferenceIds(image.revisedPrompt ?? ''))
         const promptRefs = await resolveReferenceImages(promptRefIds)
-        const imgId = await storeImage(image.dataUrl, 'generated')
+        const imgId = await storeNormalizedImage(image.dataUrl)
         cacheImage(imgId, image.dataUrl)
         const actualParams: Partial<TaskParams> = {
           ...(Object.keys(image.actualParams ?? {}).length ? image.actualParams : {}),
@@ -3849,10 +3854,9 @@ async function executeTask(taskId: string) {
       return
     }
 
-    // 存储输出图片
     const outputIds: string[] = []
     for (const dataUrl of result.images) {
-      const imgId = await storeImage(dataUrl, 'generated')
+      const imgId = await storeNormalizedImage(dataUrl)
       cacheImage(imgId, dataUrl)
       outputIds.push(imgId)
     }
@@ -4264,7 +4268,7 @@ async function completeRecoveredCustomTask(task: TaskRecord, result: Awaited<Ret
   const actualParamsList = await readImageSizeParamsList(result.images)
   const outputIds: string[] = []
   for (const dataUrl of result.images) {
-    const imgId = await storeImage(dataUrl, 'generated')
+    const imgId = await storeNormalizedImage(dataUrl)
     cacheImage(imgId, dataUrl)
     outputIds.push(imgId)
   }
